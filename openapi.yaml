@@ -1,0 +1,936 @@
+openapi: 3.0.3
+info:
+  title: SkillSwap API
+  version: 1.0.0
+  description: 'SkillSwap бол оюутнууд хоорондоо ур чадвараа заах, сурах платформ.
+
+    Session-ы төлбөрийг платформ доторх credit-ээр тооцно.
+
+    Энэ API нь хайлт, session товлолт, check-in, credit үлдэгдэл,
+
+    no-show мэдээлэл болон webhook бүртгэлийг хамарна.
+
+
+    Нэвтэрсний дараа `access_token`-ыг Swagger UI-ийн **Authorize** товчинд paste хийж Try it out ашиглана.
+
+    '
+  contact:
+    name: SkillSwap Dev Team
+    email: dev@skillswap.example.mn
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+- url: http://localhost:3000
+  description: Local demo backend (node backend/server.js)
+- url: https://api.skillswap.example.mn/v1
+  description: Production Server (placeholder)
+security:
+- BearerAuth: []
+tags:
+- name: Auth
+  description: Нэвтрэлт
+- name: Search
+  description: Ур чадвараар хайх (FR-02, FR-13)
+- name: Sessions
+  description: Session товлолт, check-in, no-show (FR-04, 07, 10)
+- name: Credits
+  description: Credit үлдэгдэл (FR-05)
+- name: Webhooks
+  description: Үйл явдлын мэдэгдэл (FR-11)
+- name: Users
+  description: Бүртгэл ба профайл (FR-01, FR-03)
+- name: Disputes
+  description: Үнэлгээ ба маргаан (FR-08, FR-12)
+paths:
+  /auth/login:
+    post:
+      tags:
+      - Auth
+      operationId: login
+      summary: Нэвтэрч JWT access token авах
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: oyuntsetseg@num.edu.mn
+              password: your_account_password
+      responses:
+        '200':
+          description: Амжилттай нэвтэрлээ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example
+                token_type: Bearer
+                expires_in: 3600
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /skills/search:
+    get:
+      tags:
+      - Search
+      operationId: searchTeachers
+      summary: Заагчийг ур чадвар, үнэлгээ, цагаар хайх
+      description: Үр дүнг үнэлгээгээр (өндрөөс нам) эрэмбэлнэ. Хариу 3 секундээс хэтрэхгүй (NFR-01).
+      parameters:
+      - name: skill
+        in: query
+        required: false
+        description: Ур чадварын нэр. skill эсвэл category-ийн аль нэг заавал байна
+        schema:
+          type: string
+        example: Франц хэл
+      - name: category
+        in: query
+        required: false
+        description: Ур чадварын ангилал
+        schema:
+          type: string
+          enum:
+          - Хэл
+          - Программчлал
+          - Дизайн
+        example: Хэл
+      - name: min_rating
+        in: query
+        required: false
+        description: Хамгийн бага дундаж үнэлгээ (1-5)
+        schema:
+          type: number
+          minimum: 1
+          maximum: 5
+        example: 4
+      - name: available_from
+        in: query
+        required: false
+        description: Боломжит эхлэх цаг (ISO 8601)
+        schema:
+          type: string
+          format: date-time
+        example: '2026-10-12T14:00:00+08:00'
+      responses:
+        '200':
+          description: Хайлтын үр дүн
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - results
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TeacherSummary'
+              example:
+                results:
+                - user_id: usr_4f2a91
+                  name: Бат-Эрдэнэ
+                  skill: Франц хэл
+                  avg_rating: 4.8
+                  completed_sessions: 23
+                  no_show_rate: 0.04
+                  category: Хэл
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /sessions:
+    post:
+      tags:
+      - Sessions
+      operationId: proposeSession
+      summary: Session санал болгох
+      description: Огноо, цаг, credit хэмжээг санал болгоно. Нөгөө тал зөвшөөрч, татгалзаж эсвэл өөрчилж санал болгоно (FR-04).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposeSessionRequest'
+            example:
+              teacher_id: usr_4f2a91
+              skill: Франц хэл
+              start_time: '2026-10-12T14:00:00+08:00'
+              end_time: '2026-10-12T15:00:00+08:00'
+              credits: 5
+      responses:
+        '201':
+          description: Санал үүсгэгдлээ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              example:
+                session_id: ses_7c31d0
+                teacher_id: usr_4f2a91
+                learner_id: usr_b82e17
+                skill: Франц хэл
+                start_time: '2026-10-12T14:00:00+08:00'
+                end_time: '2026-10-12T15:00:00+08:00'
+                credits: 5
+                status: proposed
+                proposed_by: usr_b82e17
+                checkins: &id002
+                  teacher: false
+                  learner: false
+                completed_at: null
+                ratings: &id001 {}
+                flag_id: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Credit хүрэлцэхгүй эсвэл no-show хязгаарлалттай (FR-10)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INSUFFICIENT_CREDITS
+                message: Credit үлдэгдэл хүрэлцэхгүй байна.
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /sessions/{sessionId}/check-in:
+    post:
+      tags:
+      - Sessions
+      operationId: checkInSession
+      summary: Session-д check-in хийх
+      description: 'Session "confirmed" төлөвтэй байх ёстой (нөгөө тал зөвшөөрсний дараа).
+
+        Хоёр тал тус тусдаа check-in хийснээр session "дууссан" болж,
+
+        credit автоматаар шилжинэ (FR-06, FR-07). 24 цагт зөвхөн нэг тал
+
+        хийвэл "unconfirmed" төлөвт орно.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - role
+              properties:
+                role:
+                  type: string
+                  enum:
+                  - teacher
+                  - learner
+                  description: Check-in хийж буй талын үүрэг
+            example:
+              role: learner
+      responses:
+        '200':
+          description: Check-in бүртгэгдлээ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              example:
+                session_id: ses_7c31d0
+                teacher_id: usr_4f2a91
+                learner_id: usr_b82e17
+                skill: Франц хэл
+                start_time: '2026-10-12T14:00:00+08:00'
+                end_time: '2026-10-12T15:00:00+08:00'
+                credits: 5
+                status: completed
+                proposed_by: usr_b82e17
+                checkins:
+                  teacher: true
+                  learner: true
+                completed_at: '2026-10-12T15:02:11.482Z'
+                ratings: *id001
+                flag_id: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '409':
+          description: Суралцагчийн credit хүрэлцэхгүй тул шилжүүлэг хийгдсэнгүй
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INSUFFICIENT_CREDITS
+                message: Суралцагчийн credit хүрэлцэхгүй байна.
+  /sessions/{sessionId}/no-show:
+    post:
+      tags:
+      - Sessions
+      operationId: reportNoShow
+      summary: No-show мэдээлэх
+      description: Session дууссанаас хойш 1 цагийн дотор мэдээлнэ. 30 хоногт 3 удаа мэдээлэгдвэл 7 хоног хязгаарлана (FR-10).
+      parameters:
+      - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - absent_user_id
+              properties:
+                absent_user_id:
+                  type: string
+                  description: Ирээгүй хэрэглэгчийн ID
+                comment:
+                  type: string
+                  description: Нэмэлт тайлбар
+            example:
+              absent_user_id: usr_b82e17
+              comment: 15 минут хүлээсэн ч холбогдсонгүй
+      responses:
+        '200':
+          description: No-show бүртгэгдлээ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  status:
+                    type: string
+                  absent_user_restricted:
+                    type: boolean
+                    description: 30 хоногт 3 удаа мэдээлэгдсэн бол true
+              example:
+                session_id: ses_7c31d0
+                status: no_show_reported
+                absent_user_restricted: false
+        '400':
+          description: 1 цагийн цонх хаагдсан эсвэл хүсэлт буруу
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: NO_SHOW_WINDOW_CLOSED
+                message: No-show мэдээлэх 1 цагийн хугацаа дууссан.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /credits/balance:
+    get:
+      tags:
+      - Credits
+      operationId: getCreditBalance
+      summary: Өөрийн credit үлдэгдэл харах
+      responses:
+        '200':
+          description: Одоогийн үлдэгдэл
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - balance
+                - frozen
+                properties:
+                  balance:
+                    type: integer
+                    description: Ашиглах боломжтой credit
+                  frozen:
+                    type: integer
+                    description: Flag-ийн улмаас царцсан credit
+              example:
+                balance: 25
+                frozen: 5
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /webhooks/subscribe:
+    post:
+      tags:
+      - Webhooks
+      operationId: subscribeWebhook
+      summary: Webhook URL бүртгэх
+      description: Session-ы үйл явдлын мэдэгдлийг өөрийн URL руу хүлээн авна.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookRequest'
+            example:
+              callback_url: https://your-app.example.mn/hooks/skillswap
+              events:
+              - session.confirmed
+              - session.completed
+      responses:
+        '201':
+          description: Webhook бүртгэгдлээ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+              example:
+                webhook_id: whk_19ab40
+                callback_url: https://your-app.example.mn/hooks/skillswap
+                events:
+                - session.confirmed
+                - session.completed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /auth/register:
+    post:
+      tags:
+      - Users
+      operationId: register
+      summary: Шинээр бүртгүүлэх
+      description: Нэр, утас, имэйл, нууц үг, заах ур чадвар бүртгэнэ (FR-01). Нууц үг hash хийгдэж хадгалагдана (NFR-03).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              name: Сарнай
+              phone: '88001122'
+              email: sarnai2@num.edu.mn
+              password: your_account_password
+              skills:
+              - name: Код бичих
+                category: Программчлал
+      responses:
+        '201':
+          description: Бүртгэгдлээ
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - user_id
+                - name
+                - email
+                properties:
+                  user_id:
+                    type: string
+                  name:
+                    type: string
+                  email:
+                    type: string
+                  skills:
+                    type: array
+                    items:
+                      type: object
+              example:
+                user_id: usr_91ab3e
+                name: Сарнай
+                email: sarnai2@num.edu.mn
+                skills:
+                - name: Код бичих
+                  category: Программчлал
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /sessions/{sessionId}/respond:
+    post:
+      tags:
+      - Sessions
+      operationId: respondToSession
+      summary: Саналд хариулах
+      description: Нөгөө тал зөвшөөрөх (accept), татгалзах (decline) эсвэл өөрчилж санал болгоно (counter) (FR-04). Зөвшөөрөхөд
+        Calendar event үүсэж, сануулга товлогдоно (FR-11, FR-15).
+      parameters:
+      - &id003
+        $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - action
+              properties:
+                action:
+                  type: string
+                  enum:
+                  - accept
+                  - decline
+                  - counter
+                credits:
+                  type: integer
+                  minimum: 1
+                start_time:
+                  type: string
+                  format: date-time
+                end_time:
+                  type: string
+                  format: date-time
+            example:
+              action: accept
+      responses:
+        '200':
+          description: Хариу бүртгэгдлээ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              example:
+                session_id: ses_7c31d0
+                teacher_id: usr_4f2a91
+                learner_id: usr_b82e17
+                skill: Франц хэл
+                start_time: '2026-10-12T14:00:00+08:00'
+                end_time: '2026-10-12T15:00:00+08:00'
+                credits: 5
+                status: confirmed
+                proposed_by: usr_b82e17
+                checkins: *id002
+                completed_at: null
+                ratings: *id001
+                flag_id: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Суралцагчийн credit хүрэлцэхгүй
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: INSUFFICIENT_CREDITS
+                message: Суралцагчийн credit хүрэлцэхгүй байна.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /sessions/{sessionId}/rate:
+    post:
+      tags:
+      - Disputes
+      operationId: rateSession
+      summary: Session-д үнэлгээ өгөх
+      description: Дууссан session дээр нөгөө талыг 1-5 одоор үнэлнэ (FR-08). Нэг session-ыг нэг хүн нэг удаа үнэлнэ.
+      parameters:
+      - *id003
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - stars
+              properties:
+                stars:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                comment:
+                  type: string
+            example:
+              stars: 5
+              comment: Маш ойлгомжтой заасан
+      responses:
+        '200':
+          description: Үнэлгээ бүртгэгдлээ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  rated_user:
+                    type: string
+                  stars:
+                    type: integer
+              example:
+                session_id: ses_7c31d0
+                rated_user: usr_4f2a91
+                stars: 5
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /sessions/{sessionId}/flag:
+    post:
+      tags:
+      - Disputes
+      operationId: flagSessionCredit
+      summary: Credit тооцоог flag хийх
+      description: Шударга бус гэж үзсэн credit тооцоог session дууссанаас хойш 72 цагийн дотор admin-д flag хийнэ. Шийдвэр
+        гартал credit царцна (FR-12).
+      parameters:
+      - *id003
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - reason
+              properties:
+                reason:
+                  type: string
+            example:
+              reason: Тохирсон 5 credit-ийн оронд 8 credit тооцогдсон
+      responses:
+        '201':
+          description: Flag бүртгэгдэж credit царцлаа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Flag'
+              example:
+                id: flg_5b21c8
+                session_id: ses_7c31d0
+                raised_by: usr_b82e17
+                reason: Тохирсон 5 credit-ийн оронд 8 credit тооцогдсон
+                status: open
+                credits: 5
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      description: Session-ы ID
+      schema:
+        type: string
+      example: ses_7c31d0
+  responses:
+    BadRequest:
+      description: Хүсэлт буруу
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: VALIDATION_ERROR
+            message: Шаардлагатай талбар дутуу байна.
+    Unauthorized:
+      description: Token байхгүй эсвэл хүчингүй
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: UNAUTHORIZED
+            message: Нэвтрэх шаардлагатай.
+    NotFound:
+      description: Олдсонгүй
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: NOT_FOUND
+            message: Session олдсонгүй.
+    ServerError:
+      description: Серверийн алдаа
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: INTERNAL_ERROR
+            message: Түр хугацаанд алдаа гарлаа. Дахин оролдоно уу.
+  schemas:
+    Error:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    LoginRequest:
+      type: object
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: oyuntsetseg@num.edu.mn
+        password:
+          type: string
+          format: password
+          example: your_account_password
+    LoginResponse:
+      type: object
+      required:
+      - access_token
+      - token_type
+      - expires_in
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Секундээр
+          example: 3600
+    TeacherSummary:
+      type: object
+      required:
+      - user_id
+      - name
+      - skill
+      - avg_rating
+      properties:
+        user_id:
+          type: string
+          example: usr_4f2a91
+        name:
+          type: string
+          example: Бат-Эрдэнэ
+        skill:
+          type: string
+          example: Франц хэл
+        avg_rating:
+          type: number
+          example: 4.8
+        completed_sessions:
+          type: integer
+          example: 23
+        no_show_rate:
+          type: number
+          description: 0-1 хоорондох хувь
+          example: 0.04
+        category:
+          type: string
+          example: Хэл
+    ProposeSessionRequest:
+      type: object
+      required:
+      - teacher_id
+      - skill
+      - start_time
+      - end_time
+      - credits
+      properties:
+        teacher_id:
+          type: string
+          example: usr_4f2a91
+        skill:
+          type: string
+          example: Франц хэл
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        credits:
+          type: integer
+          minimum: 1
+          example: 5
+    Session:
+      type: object
+      required:
+      - session_id
+      - teacher_id
+      - learner_id
+      - skill
+      - start_time
+      - end_time
+      - credits
+      - status
+      properties:
+        session_id:
+          type: string
+          example: ses_7c31d0
+        teacher_id:
+          type: string
+        learner_id:
+          type: string
+        skill:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        credits:
+          type: integer
+        status:
+          type: string
+          enum:
+          - proposed
+          - confirmed
+          - unconfirmed
+          - completed
+          - cancelled
+          - no_show_reported
+        proposed_by:
+          type: string
+          description: Сүүлийн саналыг гаргасан хэрэглэгчийн ID
+          example: usr_b82e17
+        checkins:
+          type: object
+          properties:
+            teacher:
+              type: boolean
+            learner:
+              type: boolean
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        ratings:
+          type: object
+          description: Үнэлгээ өгсөн хэрэглэгч бүрийн оноо
+          additionalProperties:
+            type: object
+        flag_id:
+          type: string
+          nullable: true
+          description: Credit flag хийгдсэн бол flag ID
+    WebhookRequest:
+      type: object
+      required:
+      - callback_url
+      - events
+      properties:
+        callback_url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+            enum:
+            - session.confirmed
+            - session.completed
+            - session.cancelled
+            - credit.transferred
+    Webhook:
+      allOf:
+      - $ref: '#/components/schemas/WebhookRequest'
+      - type: object
+        required:
+        - webhook_id
+        properties:
+          webhook_id:
+            type: string
+            example: whk_19ab40
+    RegisterRequest:
+      type: object
+      required:
+      - name
+      - phone
+      - email
+      - password
+      properties:
+        name:
+          type: string
+          example: Сарнай
+        phone:
+          type: string
+          example: '88001122'
+        email:
+          type: string
+          format: email
+          example: sarnai@num.edu.mn
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: your_account_password
+        skills:
+          type: array
+          items:
+            type: object
+            required:
+            - name
+            properties:
+              name:
+                type: string
+                example: Код бичих
+              category:
+                type: string
+                example: Программчлал
+    Flag:
+      type: object
+      required:
+      - id
+      - session_id
+      - status
+      - credits
+      properties:
+        id:
+          type: string
+          example: flg_5b21c8
+        session_id:
+          type: string
+        raised_by:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+          enum:
+          - open
+          - upheld
+          - rejected
+        credits:
+          type: integer
