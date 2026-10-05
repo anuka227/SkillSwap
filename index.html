@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SkillSwap</title>
+<style>
+:root{--ink:#16202b;--mute:#5d6b78;--paper:#eef3f2;--panel:#fff;--line:#d5dedc;--accent:#0e7c6b;--accent-ink:#fff;--credit:#b7791f;--danger:#b42318;--ok:#157347}
+@media (prefers-color-scheme:dark){:root{--ink:#e6edf0;--mute:#94a3ad;--paper:#10181c;--panel:#18232a;--line:#2b3a42;--accent:#35b79f;--accent-ink:#06211c;--credit:#e0a84a;--danger:#f08a7e;--ok:#6fcf97}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:6px}
+.brand{font-size:20px;font-weight:700;letter-spacing:-.02em;margin-bottom:12px}
+.credit{margin:6px 0 14px;padding:12px;border:1px solid var(--line);border-radius:6px}
+.credit b{display:block;font-size:34px;line-height:1.1;color:var(--credit);font-variant-numeric:tabular-nums}
+.credit small{color:var(--mute)}
+nav button{display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:none;border-radius:6px;cursor:pointer}
+nav button[aria-current=true]{background:var(--accent);color:var(--accent-ink)}
+nav button:hover:not([aria-current=true]){background:var(--paper)}
+main{padding:24px;max-width:860px;width:100%}
+h2{margin:0 0 14px;font-size:22px;letter-spacing:-.01em}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mute)}
+input,select,textarea{padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);min-width:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.bad{color:var(--danger)}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;border:1px solid var(--line);font-size:12px;color:var(--mute)}
+.tag.completed{color:var(--ok);border-color:var(--ok)}.tag.cancelled,.tag.no_show_reported{color:var(--danger);border-color:var(--danger)}
+.meta{color:var(--mute);font-size:13px}
+.head{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.chat{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.chat p{margin:2px 0}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:6px 4px;border-bottom:1px solid var(--line)}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:9px 14px;border-radius:6px;display:none;max-width:90vw}
+#toast.err{background:var(--danger);color:#fff}
+.login{max-width:420px;margin:8vh auto;padding:0 16px}
+.demo{display:grid;gap:6px;margin:10px 0}
+@media (max-width:720px){.app{grid-template-columns:1fr}aside{flex-direction:row;flex-wrap:wrap;align-items:center;border-right:0;border-bottom:1px solid var(--line)}.credit{margin:0}nav{display:flex;flex-wrap:wrap}main{padding:14px}}
+</style>
+</head>
+<body>
+<div id="root"></div><div id="toast" role="status"></div>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const STATUS = { proposed: 'Санал', confirmed: 'Зөвшөөрсөн', completed: 'Дууссан', unconfirmed: 'Баталгаажаагүй', cancelled: 'Цуцлагдсан', no_show_reported: 'No-show' };
+const fmt = (iso) => new Date(iso).toLocaleString('mn-MN', { dateStyle: 'medium', timeStyle: 'short' });
+const local = (ms) => new Date(ms - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+let token = sessionStorage.getItem('tok'), me = null, tab = 'search', cache = {};
+
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', ...(token && { Authorization: `Bearer ${token}` }) }, body: body && JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.message || `Алдаа ${r.status}`);
+  return data;
+}
+function toast(msg, bad) {
+  const t = $('#toast'); t.textContent = msg; t.className = bad ? 'err' : ''; t.style.display = 'block';
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = 'none'), 3500);
+}
+const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+
+// ---------- Нэвтрэлт ----------
+function loginView() {
+  $('#root').innerHTML = `<div class="login card"><div class="brand">SkillSwap</div>
+  <p class="meta">Оюутнууд ур чадвараа credit-ээр солилцдог платформ.</p>
+  <div class="demo">
+    <button class="btn" data-demo="oyuntsetseg@num.edu.mn">Суралцагчаар орох (Оюунцэцэг)</button>
+    <button class="btn" data-demo="baterdene@num.edu.mn">Заагчаар орох (Бат-Эрдэнэ)</button>
+    <button class="btn" data-demo="temuulen@num.edu.mn">Admin-аар орох (Тэмүүлэн)</button></div>
+  <form id="lf" class="row"><label>Имэйл<input name="email" type="email" required></label>
+  <label>Нууц үг<input name="password" type="password" required></label><button class="btn pri">Нэвтрэх</button></form>
+  <hr><details><summary>Шинээр бүртгүүлэх</summary><form id="rf" class="row" style="margin-top:10px">
+  <label>Нэр<input name="name" required></label><label>Утас<input name="phone" required></label>
+  <label>Имэйл<input name="email" type="email" required></label><label>Нууц үг (8+)<input name="password" type="password" minlength="8" required></label>
+  <label>Заах ур чадвар<input name="skill" placeholder="Жишээ: Гитар"></label><label>Ангилал<input name="category" placeholder="Жишээ: Хөгжим"></label>
+  <button class="btn pri">Бүртгүүлэх</button></form></details></div>`;
+  const enter = guard(async (email, password) => {
+    token = (await api('POST', '/auth/login', { email, password })).access_token;
+    sessionStorage.setItem('tok', token); await boot();
+  });
+  document.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = () => enter(b.dataset.demo, 'your_account_password')));
+  $('#lf').onsubmit = (e) => { e.preventDefault(); const f = new FormData(e.target); enter(f.get('email'), f.get('password')); };
+  $('#rf').onsubmit = guard(async (e) => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+    await api('POST', '/auth/register', { name: f.name, phone: f.phone, email: f.email, password: f.password,
+      skills: f.skill ? [{ name: f.skill, category: f.category || 'Бусад' }] : [] });
+    toast('Бүртгэгдлээ. Одоо нэвтэрнэ үү.'); await enter(f.email, f.password);
+  });
+}
+
+// ---------- Үндсэн бүтэц ----------
+async function boot() {
+  try { me = await api('GET', '/me'); } catch { token = null; sessionStorage.removeItem('tok'); return loginView(); }
+  $('#root').innerHTML = `<div class="app"><aside><div class="brand">SkillSwap</div>
+  <div class="meta">${esc(me.name)}</div><div class="credit"><b id="bal">–</b><small id="frz"></small></div>
+  <nav id="nav"></nav><div style="flex:1"></div><button class="btn" id="out">Гарах</button></aside><main id="main"></main></div>`;
+  const tabs = [['search', 'Хайлт'], ['sessions', 'Миний session'], ['credits', 'Credit'], ['notes', 'Мэдэгдэл'], ...(me.role === 'admin' ? [['admin', 'Admin']] : [])];
+  if (me.role === 'admin') tab = 'admin';
+  $('#nav').innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('');
+  $('#nav').onclick = (e) => { if (e.target.dataset.tab) { tab = e.target.dataset.tab; show(); } };
+  $('#out').onclick = () => { token = null; sessionStorage.removeItem('tok'); loginView(); };
+  if (me.restricted_until) toast(`No-show-ын улмаас ${me.restricted_until.slice(0, 10)} хүртэл session захиалах боломжгүй`, true);
+  show();
+}
+async function show() {
+  document.querySelectorAll('#nav button').forEach((b) => b.setAttribute('aria-current', b.dataset.tab === tab));
+  try {
+    const bal = await api('GET', '/credits/balance');
+    $('#bal').textContent = bal.balance; $('#frz').textContent = bal.frozen ? `credit, царцсан ${bal.frozen}` : 'credit';
+    await views[tab]();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---------- Хайлт (FR-02, 03, 13) ----------
+const views = {};
+views.search = async () => {
+  $('#main').innerHTML = `<h2>Заагч хайх</h2><form id="sf" class="card row">
+  <label>Ур чадвар<input name="skill" value="${esc(cache.skill ?? 'Франц хэл')}"></label>
+  <label>Ангилал<select name="category"><option value="">Бүгд</option><option>Хэл</option><option>Программчлал</option><option>Дизайн</option></select></label>
+  <label>Хамгийн бага үнэлгээ<input name="min_rating" type="number" min="0" max="5" step="0.1" value="0" style="width:90px"></label>
+  <label>Боломжит цаг<input name="available_from" type="datetime-local"></label><button class="btn pri">Хайх</button></form><div id="res"></div>`;
+  $('#sf').onsubmit = guard(async (e) => {
+    e.preventDefault(); const f = new FormData(e.target); const q = new URLSearchParams();
+    for (const [k, v] of f) if (v) q.set(k, k === 'available_from' ? new Date(v).toISOString() : v);
+    cache.skill = f.get('skill');
+    const { results } = await api('GET', `/skills/search?${q}`);
+    $('#res').innerHTML = results.length ? results.map((t) => `<div class="card" data-t="${esc(t.user_id)}"><div class="head"><b>${esc(t.name)}</b>
+      <span>★ ${t.avg_rating ?? '–'}</span></div><div class="meta">${esc(t.skill)} · ${esc(t.category)} · ${t.completed_sessions} session · no-show ${Math.round(t.no_show_rate * 100)}%</div>
+      <div class="acts"><button class="btn pri" data-propose="${esc(t.user_id)}" data-skill="${esc(t.skill)}">Session санал болгох</button></div></div>`).join('')
+      : '<p class="meta">Үр дүн олдсонгүй. Шүүлтүүрээ багасгаж үзнэ үү.</p>';
+  });
+  $('#res').onclick = (e) => {
+    const b = e.target.closest('[data-propose]'); if (!b) return;
+    const card = b.closest('.card'); const now = Date.now();
+    card.insertAdjacentHTML('beforeend', `<form class="row pf" style="margin-top:10px"><label>Эхлэх<input name="s" type="datetime-local" value="${local(now)}" required></label>
+      <label>Дуусах<input name="e" type="datetime-local" value="${local(now + 3600000)}" required></label>
+      <label>Credit<input name="c" type="number" min="1" value="5" style="width:80px"></label><button class="btn pri">Илгээх</button></form>`);
+    b.disabled = true;
+    $('.pf', card).onsubmit = guard(async (ev) => {
+      ev.preventDefault(); const f = new FormData(ev.target);
+      await api('POST', '/sessions', { teacher_id: b.dataset.propose, skill: b.dataset.skill, start_time: new Date(f.get('s')).toISOString(),
+        end_time: new Date(f.get('e')).toISOString(), credits: +f.get('c') });
+      toast('Санал илгээгдлээ'); tab = 'sessions'; show();
+    });
+  };
+};
+
+// ---------- Session (FR-04..10, 12) ----------
+views.sessions = async () => {
+  const { sessions } = await api('GET', '/sessions');
+  $('#main').innerHTML = `<h2>Миний session</h2>` + (sessions.length ? sessions.map((s) => {
+    const role = s.teacher_id === me.user_id ? 'teacher' : 'learner';
+    const other = role === 'teacher' ? s.learner_name : s.teacher_name, otherId = role === 'teacher' ? s.learner_id : s.teacher_id;
+    const a = [];
+    if (s.status === 'proposed' && s.proposed_by !== me.user_id) a.push(['accept', 'Зөвшөөрөх', 'pri'], ['counter', 'Өөрчилж санал болгох'], ['decline', 'Татгалзах', 'bad']);
+    if (s.status === 'proposed' && s.proposed_by === me.user_id) a.push(['wait', 'Хариу хүлээж байна']);
+    if (s.status === 'confirmed' && !s.checkins[role]) a.push(['checkin', 'Check-in', 'pri']);
+    if (s.status === 'confirmed') a.push(['noshow', 'No-show мэдээлэх', 'bad']);
+    if (['proposed', 'confirmed'].includes(s.status)) a.push(['cancel', 'Цуцлах']);
+    if (s.status === 'completed' && !s.ratings[me.user_id]) a.push(['rate', 'Үнэлэх', 'pri']);
+    if (s.status === 'completed' && !s.flag_id) a.push(['flag', 'Credit-ийг flag хийх', 'bad']);
+    a.push(['chat', 'Чат']);
+    return `<div class="card" data-id="${esc(s.session_id)}" data-other="${esc(otherId)}" data-role="${role}" data-credits="${s.credits}">
+      <div class="head"><b>${esc(s.skill)} · ${esc(other)}</b><span class="tag ${s.status}">${STATUS[s.status] || s.status}</span></div>
+      <div class="meta">${fmt(s.start_time)} – ${fmt(s.end_time)} · ${s.credits} credit${s.flag_id ? ' · flag хийгдсэн' : ''}</div>
+      <div class="meta">Check-in: заагч ${s.checkins.teacher ? '✓' : '–'}, суралцагч ${s.checkins.learner ? '✓' : '–'}</div>
+      <div class="acts">${a.map(([k, l, c]) => `<button class="btn ${c || ''}" data-act="${k}" ${k === 'wait' ? 'disabled' : ''}>${l}</button>`).join('')}</div></div>`;
+  }).join('') : '<p class="meta">Session алга. “Хайлт” хэсгээс заагч сонгож санал илгээнэ үү.</p>');
+  $('#main').onclick = guard(async (e) => {
+    const btn = e.target.closest('[data-act]'); if (!btn) return;
+    const card = btn.closest('.card'), id = card.dataset.id, act = btn.dataset.act, post = (p, b) => api('POST', `/sessions/${id}/${p}`, b);
+    if (act === 'accept' || act === 'decline') await post('respond', { action: act });
+    else if (act === 'counter') { const c = prompt('Шинэ credit хэмжээ', card.dataset.credits); if (!c) return; await post('respond', { action: 'counter', credits: +c }); }
+    else if (act === 'checkin') await post('check-in', { role: card.dataset.role });
+    else if (act === 'noshow') await post('no-show', { absent_user_id: card.dataset.other });
+    else if (act === 'cancel') await post('cancel', {});
+    else if (act === 'rate') { const st = prompt('Үнэлгээ (1-5 од)', '5'); if (!st) return; await post('rate', { stars: +st, comment: prompt('Сэтгэгдэл (заавал биш)') || '' }); }
+    else if (act === 'flag') { const r = prompt('Яагаад шударга бус гэж үзэж байна вэ?'); if (!r) return; await post('flag', { reason: r }); }
+    else if (act === 'chat') return chat(card, id);
+    toast('Хадгалагдлаа'); show();
+  });
+};
+async function chat(card, id) {
+  let box = $('.chat', card);
+  if (!box) { box = document.createElement('div'); box.className = 'chat'; card.appendChild(box); }
+  const { messages } = await api('GET', `/sessions/${id}/messages`);
+  box.innerHTML = messages.map((m) => `<p><b>${esc(m.from_name)}:</b> ${esc(m.text)}</p>`).join('') || '<p class="meta">Мессеж алга.</p>';
+  box.insertAdjacentHTML('beforeend', `<form class="row"><input name="t" placeholder="Мессеж бичих" style="flex:1" required><button class="btn pri">Илгээх</button></form>`);
+  $('form', box).onsubmit = guard(async (e) => { e.preventDefault(); await api('POST', `/sessions/${id}/messages`, { text: new FormData(e.target).get('t') }); chat(card, id); });
+}
+
+// ---------- Credit (FR-05) ----------
+views.credits = async () => {
+  const [b, { entries }] = await Promise.all([api('GET', '/credits/balance'), api('GET', '/credits/ledger')]);
+  const T = { transfer: 'Шилжүүлэг', freeze: 'Царцаалт', refund: 'Буцаалт', release: 'Чөлөөлөлт' };
+  $('#main').innerHTML = `<h2>Credit</h2><div class="card">Үлдэгдэл: <b>${b.balance}</b> · Царцсан: <b>${b.frozen}</b></div>
+  <div class="card"><table><tr><th>Огноо</th><th>Төрөл</th><th>Credit</th><th>Чиглэл</th></tr>${entries.map((l) => `<tr><td>${fmt(l.at)}</td><td>${T[l.type]}</td><td>${l.credits}</td>
+  <td>${l.to === me.user_id ? 'Орсон' : 'Гарсан'}</td></tr>`).join('') || '<tr><td colspan="4" class="meta">Гүйлгээ алга.</td></tr>'}</table></div>`;
+};
+
+// ---------- Мэдэгдэл, Calendar (FR-11, 15: симуляци) ----------
+views.notes = async () => {
+  const { notifications, calendar_events } = await api('GET', '/notifications');
+  $('#main').innerHTML = `<h2>Мэдэгдэл</h2><p class="meta">Push болон Google Calendar холболтыг симуляци хэлбэрээр харуулж байна.</p>
+  <div class="card">${notifications.map((n) => `<p><span class="tag">${n.state === 'sent' ? 'илгээсэн' : 'товлогдсон'}</span> ${fmt(n.send_at)} · ${esc(n.message)}</p>`).join('') || '<span class="meta">Мэдэгдэл алга.</span>'}</div>
+  <h2>Calendar event</h2><div class="card">${calendar_events.map((e) => `<p>${esc(e.title)} · ${fmt(e.start_time)}</p>`).join('') || '<span class="meta">Event алга.</span>'}</div>`;
+};
+
+// ---------- Admin (FR-12, 14) ----------
+views.admin = async () => {
+  const [d, { entries }] = await Promise.all([api('GET', '/admin/dashboard'), api('GET', '/admin/audit-log')]);
+  $('#main').innerHTML = `<h2>Маргаан шийдвэрлэх</h2>` + (d.flags.map((f) => `<div class="card" data-f="${esc(f.id)}"><b>${f.credits} credit царцсан</b>
+    <div class="meta">Session ${esc(f.session_id)} · ${esc(f.raised_by_name)}: ${esc(f.reason)}</div><div class="acts">
+    <button class="btn pri" data-d="approve">Зөвшөөрөх (суралцагчид буцаах)</button><button class="btn" data-d="reject">Татгалзах (заагчид олгох)</button></div></div>`).join('') || '<p class="meta">Нээлттэй flag алга.</p>')
+  + `<h2>No-show</h2><div class="card">${d.no_shows.map((n) => `<p>${esc(n.skill)} · ${esc(n.teacher)} / ${esc(n.learner)}</p>`).join('') || '<span class="meta">Алга.</span>'}</div>
+  <h2>Audit log</h2><div class="card"><table>${entries.map((l) => `<tr><td>${fmt(l.at)}</td><td>${esc(l.action)}</td><td>${esc(l.target)}</td></tr>`).join('') || '<tr><td class="meta">Бичлэг алга.</td></tr>'}</table></div>`;
+  $('#main').onclick = guard(async (e) => {
+    const b = e.target.closest('[data-d]'); if (!b) return;
+    await api('POST', `/admin/flags/${b.closest('.card').dataset.f}/resolve`, { decision: b.dataset.d, note: '' }); toast('Шийдвэр бүртгэгдлээ'); show();
+  });
+};
+
+token ? boot() : loginView();
+</script>
+</body>
+</html>
